@@ -4,3 +4,4 @@ numpy
 yfinance
 streamlit-autorefresh
 pandas-market-calendars
+plotly==6.9.0
