@@ -393,6 +393,7 @@ st.markdown("""<style>
   [data-testid="manage-app-button"], [data-testid="stAppDeployButton"] {display:none !important;}
 </style>""", unsafe_allow_html=True)
 hunter_user = hunter_login()
+monitor_prepare()
 IS_ADMIN = hunter_user["role"] == "admin"
 hunter_settings = hunter_load_settings()
 PRICE_BOARD_REFRESH_SECONDS = hunter_settings["refresh_seconds"]
@@ -3793,7 +3794,31 @@ update_paper_trade(
 # ============================================================
 # SELECTED INSTRUMENT / DIGITAL PRICE BOARD
 # ============================================================
+if monitor_requested():
+    render_monitor(
+        symbol=symbol,
+        frame=target_timeframe,
+        price=current_price,
+        signal=selected_frame_signal,
+        strength=signal_strength,
+        wave=wave_stage,
+        entry_low=entry_low,
+        entry_high=entry_high,
+        watch_low=zero_low,
+        watch_high=zero_high,
+        targets=[target1, target2, target3],
+        invalidation=invalidation,
+        market_status=market_status,
+        updated_at=last_ts_ny.strftime("%Y-%m-%d %H:%M:%S ET"),
+        data_age=data_age_minutes,
+        action=display_action(action_text),
+    )
 
+    # Calculations and paper-trade updates above have already run.
+    # Do not render the remaining detailed page in monitor mode.
+    st.stop()
+
+monitor_open_button(symbol, target_timeframe)
 board_checked_text = now_ny.strftime(
     "%H:%M:%S ET"
 )
