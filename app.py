@@ -23,10 +23,11 @@ import secrets as secure_random
 import sqlite3
 import time
 import threading
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-HUNTER_VERSION = "2026.09.14"
+HUNTER_VERSION = "2026.09.14-public"
 HUNTER_TFS = ["1m", "3m", "5m", "10m", "15m", "30m", "45m", "1H", "2H", "4H", "6H", "8H", "Daily", "Weekly", "Monthly"]
 HUNTER_WEIGHTS = {"1m": .5, "3m": 1., "5m": 1.5, "10m": 1.25, "15m": 1.5,
                   "30m": 1.5, "45m": 1., "1H": 1.5, "2H": 1., "4H": 1.,
@@ -128,9 +129,10 @@ def hunter_identity():
 
 def hunter_require_user():
     identity = hunter_identity()
-    if identity is None:
-        raise PermissionError("Login required")
-    return identity
+    if identity is not None:
+        return identity
+    # Explicit public read-only role; no URL, widget or session role can grant ownership.
+    return {"username":"__public__", "role":"viewer", "public":True}
 
 
 def hunter_require_admin():
@@ -191,24 +193,8 @@ def hunter_authenticate(username, password):
 
 
 def hunter_login():
-    if not hunter_accounts():
-        st.title("HUNTER · WAVE ENGINE")
-        st.info("تسجيل الدخول غير مهيأ. يرجى التواصل مع مالك البرنامج. / Login is not configured.")
-        st.stop()  # Fail closed: no data, controls or credentials exposed.
-    if hunter_identity():
-        return hunter_identity()
-    st.session_state.pop("_hunter_identity", None)
-    st.title("HUNTER · WAVE ENGINE")
-    st.caption("تسجيل الدخول / Sign in")
-    with st.form("hunter_login", clear_on_submit=True):
-        username = st.text_input("اسم المستخدم / Username", max_chars=64)
-        password = st.text_input("كلمة المرور / Password", type="password", max_chars=1024)
-        submitted = st.form_submit_button("دخول / Sign in", width="stretch")
-    if submitted:
-        if hunter_authenticate(username, password):
-            st.rerun()
-        st.error("تعذر الدخول. تحقق من بياناتك؛ بعد عدة محاولات انتظر خمس دقائق. / Sign-in failed.")
-    st.stop()
+    # Opening the app never requires credentials. Optional owner authentication is separate.
+    return hunter_require_user()
 
 
 def hunter_load_settings():
@@ -235,6 +221,8 @@ def hunter_save_settings(value):
 
 def hunter_load_theme():
     identity = hunter_require_user()
+    if identity.get("public"):
+        return st.session_state.get("hunter_guest_theme", "light")
     db = hunter_database()
     try:
         row = db.execute("SELECT theme FROM preferences WHERE username=?", (identity["username"],)).fetchone()
@@ -244,9 +232,13 @@ def hunter_load_theme():
 
 
 def hunter_save_theme(theme):
-    identity = hunter_require_user()  # Can write only the current account's preference.
+    identity = hunter_require_user()
     if theme not in ("light", "dark"):
         raise ValueError("Invalid theme")
+    if identity.get("public"):
+        # Guest preferences stay in this visitor's session, never a shared guest database row.
+        st.session_state["hunter_guest_theme"] = theme
+        return
     db = hunter_database()
     try:
         with db:
@@ -295,20 +287,28 @@ def hunter_account_bar():
     identity = hunter_require_user()
     if "hunter_theme" not in st.session_state:
         st.session_state["hunter_theme"] = hunter_load_theme()
-    left, middle, right = st.columns([3, 2, 1])
+    left, right = st.columns([4,1])
     with left:
-        role = "المالك" if identity["role"] == "admin" else "مستخدم"
-        st.caption(f"{identity['username']} · {role}")
-    with middle:
-        theme = st.radio("المظهر / Appearance", ["light", "dark"],
-                         format_func=lambda v: "فاتح / Light" if v == "light" else "غامق / Dark",
+        theme = st.radio("المظهر / Appearance", ["light","dark"],
+                         format_func=lambda value: "فاتح / Light" if value=="light" else "غامق / Dark",
                          horizontal=True, key="hunter_theme")
         if theme != hunter_load_theme():
             hunter_save_theme(theme)
     with right:
-        if st.button("خروج / Sign out", key="hunter_logout"):
-            st.session_state.clear()
-            st.rerun()
+        if not identity.get("public"):
+            if st.button("خروج المالك / Sign out", key="hunter_logout"):
+                st.session_state.clear()
+                st.rerun()
+        elif hunter_accounts():
+            with st.popover("إدارة المالك / Owner"):
+                with st.form("hunter_owner_login", clear_on_submit=True):
+                    username=st.text_input("اسم المالك / Owner username", max_chars=64)
+                    password=st.text_input("كلمة مرور المالك / Owner password",type="password",max_chars=1024)
+                    submitted=st.form_submit_button("دخول المالك / Owner sign in")
+                if submitted:
+                    if hunter_authenticate(username,password):
+                        st.rerun()
+                    st.error("تعذر تسجيل الدخول. / Sign-in failed.")
     hunter_apply_theme(theme)
 
 
@@ -3486,6 +3486,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown("""<style>
+.stMainBlockContainer {max-width:1500px; padding-top:1rem;}
+[data-testid="stMetricValue"] {font-size:clamp(1.05rem, 2.2vw, 1.5rem) !important;}
+.qt-price-main {font-size:clamp(2.3rem, 7vw, 5.5rem) !important; overflow-wrap:anywhere;}
+[data-testid="stRadio"] [role="radiogroup"] {flex-wrap:wrap; gap:.5rem;}
+@media (max-width: 767px) {
+  .block-container, .stMainBlockContainer {padding-left:.7rem !important; padding-right:.7rem !important;}
+  [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important; gap:.65rem !important;}
+  [data-testid="stColumn"] {width:100% !important; flex:1 1 100% !important; min-width:0 !important;}
+  .qt-price-board {display:flex !important; flex-direction:column !important; gap:1rem !important; padding:1rem !important;}
+  .qt-header {flex-wrap:wrap !important; gap:.7rem !important;}
+  .qt-brand {font-size:1.55rem !important;}
+  .hunter-range {padding:.8rem !important;}
+  [data-testid="stPlotlyChart"] {max-width:100%;}
+}
+</style>""", unsafe_allow_html=True)
+
 # The SAME complete instrument list is accessible to both roles.
 with st.spinner("جار تحديث قائمة الأسهم..." if AR else "Updating instruments..."):
     hunter_universe = hunter_download_universe(tuple(SYMBOLS.values()))
@@ -3999,14 +4016,8 @@ if IS_ADMIN:
 # MAIN TABS
 # ============================================================
 
-tab_labels = [tr("overview"), tr("chart"), tr("candles"), tr("news"), tr("frames"), tr("paper_log")]
-if IS_ADMIN:
-    tab_labels.append(tr("test"))
-hunter_tabs = st.tabs(tab_labels)
-tab_overview, tab_chart, tab_candles, tab_news, tab_frames, tab_log = hunter_tabs[:6]
-if IS_ADMIN:
-    tab_test = hunter_tabs[6]
-
+# One continuous page. Context aliases preserve section scoping without navigation tabs.
+tab_overview = tab_chart = tab_candles = tab_news = tab_frames = tab_log = tab_test = nullcontext()
 
 # ============================================================
 # OVERVIEW
@@ -4142,6 +4153,8 @@ with tab_overview:
 # ============================================================
 
 with tab_chart:
+    st.divider()
+    st.subheader(tr("chart"))
 
     chart_left, chart_right = st.columns(
         [1.0, 4.0],
@@ -4288,6 +4301,8 @@ with tab_chart:
 # ============================================================
 
 with tab_candles:
+    st.divider()
+    st.subheader(tr("candles"))
 
     launch_cols = st.columns(
         3,
@@ -4406,6 +4421,8 @@ with tab_candles:
 # ============================================================
 
 with tab_news:
+    st.divider()
+    st.subheader(tr("news"))
 
     news_metrics = st.columns(
         3,
@@ -4554,6 +4571,8 @@ with tab_news:
 # ============================================================
 
 with tab_frames:
+    st.divider()
+    st.subheader(tr("frames"))
 
     frame_rows = []
 
@@ -4581,6 +4600,8 @@ with tab_frames:
 # ============================================================
 
 with tab_log:
+    st.divider()
+    st.subheader(tr("paper_log"))
 
     init_paper_log()
 
